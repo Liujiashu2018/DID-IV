@@ -1,0 +1,381 @@
+---
+title: "Difference-in-Difference (DID)"
+author: "Jiashu Liu"
+date: "2023-12-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+# tinytex::reinstall_tinytex(repository = "illinois")
+```
+
+```{r, warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+set.seed(123)
+```
+\section{1) Scenario: Evaluating the Impact of Overdose Prevention Centers (OPCs) on Public Disorder Incidents}
+
+\par In this simulation study, we want to assess the impact of the opening of an Overdose Prevention Center (OPC) on public disorder incidents in New York City using a **Difference-in-Differences (DID)** regression framework. Specifically, we compare changes in public disorder incidents in neighborhoods where an OPC was established with changes in similar neighborhoods without an OPC. The **treatment group** consists of neighborhoods surrounding the OPC that opened in NYC, while the **control group** includes comparable neighborhoods without OPCs. To conduct this analysis, we will examine public disorder incident rates in both treatment and control neighborhoods **before and after** the opening of the OPC. The idea came from [Chalfin et al. (2023)](https://jamanetwork.com/journals/jamanetworkopen/fullarticle/2811766?utm_source=For_The_Media&utm_medium=referral&utm_campaign=ftm_links&utm_term=111323).
+
+By applying the DID approach, we aim to estimate the **Average Treatment Effect on the Treated (ATT)** -- that is, the causal effect of OPCs on public disorder in neighborhoods where they were introduced. The underlying assumption of this approach is that, in the absence of OPCs, public disorder trends in treatment and control neighborhoods would have followed a **parallel trajectory**. Any significant divergence in public disorder rates between these groups after the OPC was implemented can be attributed to the presence of the OPC.
+
+\section{2) DID Assumptions}
+
+\par Assumption #1: Parallel trends
+The parallel trends assumption is the foundamental assumption to ensure the validity of the DID method. It requires that the in the absence of treatment, the average outcomes for the treatment and control groups remains the same over time. In our scenario, when using the DID frame work, we are assuming that **if OPCs had not been introduced**, the change in public disorder incidents in treatment neighborhoods would have been the same as the change observed in control neighborhoods.
+
+Assumption #2: Parametric assumptions 
+In simple words, in a parametric DID model, the effect of treatment can be modeled using a linear regression framework. Parametric assumptions must be met if covariates are present in the model. 
+
+Assumption #3: Stable Unit Treatment Value Assumption (SUTVA)
+SUTVA means the outcome or response of a unit i depends only on the assignment of that unit and not the assignment of other units. With the SUTVA assumption, We assume that the change in public disorder incident rates in each neighborhood area is only due to its own OPC status and not influenced by OPC implementation in other neighborhood areas.
+
+\section{3) Data-Generating Process (DGP)}
+
+\par We simulate data for two worlds:
+
+- World A represents the scenario where all assumptions hold, including the parallel trends assumption.
+
+- World B intentionally violates the parallel trends assumption. We do this to examine how deviations from key assumptions affect ATT estimation.
+
+\subsection{Would A: All DID Assumptions Hold}
+
+\par In World A, we ensure that the parallel trends assumption holds, meaning that the expected change in public disorder incidents in the control and treatment neighborhood areas would have been the same in the absence of the intervention on average.
+
+\begin{itemize}
+    \item \textbf{Neighborhood Size:} The average population per neighborhood is 1,000 residents, with a standard deviation of 100.
+    $$
+    \text{population density} \sim \text{N}(1000, 100^2)
+    $$
+
+    \item \textbf{Pre-Treatment Public Disorder Incidents:} The number of pre-treatment public disorder incidents follows a normal distribution with a mean of 100 and a standard deviation of 20.
+    $$
+    \text{public disorder}_{pre} \sim \text{N}(100, 20^2)
+    $$
+
+    \item \textbf{OPC Treatment Assignment (Z):}
+    \begin{itemize}
+        \item \( Z = 1 \) if the neighborhood area has high pre-treatment disorder incidents (\(\geq 110\))
+        \item \( Z = 0 \) otherwise
+    \end{itemize}
+
+    \item The treatment assignment follows:
+    $$
+    Z = \begin{cases}
+        1,& \text{if } \text{public disorder}_{pre} \geq 110\\
+        0,& \text{otherwise}
+    \end{cases}
+    $$
+
+    \item \textbf{Outcome Variables:}
+    \begin{itemize}
+        \item \( Y(0) \): Control group outcome (No OPC)
+        \item \( Y(1) \): Treatment group outcome (With OPC)
+    \end{itemize}
+    
+    \begin{align}
+    Y(0) &\sim \mathcal{N}(30 + \text{public disorder}_{pre}, 20^2) \\
+    Y(1) &\sim \mathcal{N}(30 + \text{public disorder}_{pre} - 40, 20^2)
+    \end{align}
+
+    \item \textbf{Observed Post-Treatment Disorder Rate:}
+    $$
+    \text{public disorder}_{post} = \begin{cases}
+        Y(0),& \text{if } Z = 0\\
+        Y(1),& \text{otherwise}
+    \end{cases}
+    $$
+
+\end{itemize}
+
+```{r}
+n <- 1000
+populationA <- rnorm(n, mean = 1000, sd = 100) 
+disorder_preA <- rnorm(n, mean = 100, sd = 20) 
+exposedA <- ifelse(disorder_preA > 110, 1, 0)
+y0A <- rnorm(n, 30 + disorder_preA, 20)
+y1A <- rnorm(n, 30 + disorder_preA - 40, 20) 
+yA <- y0A * (1 - exposedA) + y1A * exposedA
+
+worldA <- data.frame(
+  y0A = y0A, 
+  y1A = y1A, 
+  disorder_postA = yA,
+  disorder_preA = disorder_preA,
+  exposedA = exposedA, 
+  populationA
+)
+
+# Mean public disorder for treatment and control groups at t=0 and t=1
+treatment_t0A <- mean(worldA$disorder_preA[worldA$exposedA == 1])  
+treatment_t1A <- mean(worldA$disorder_postA[worldA$exposedA == 1])  
+control_t0A <- mean(worldA$disorder_preA[worldA$exposedA == 0])  
+control_t1A <- mean(worldA$disorder_postA[worldA$exposedA == 0])
+counterfactual_treatment_postA <- treatment_t0A + (control_t1A - control_t0A)
+# control_group_y1A <- mean(worldA$y1A[worldA$exposedA==0])
+head(worldA)
+
+worldA$disorder_changeA <- worldA$disorder_postA - worldA$disorder_preA
+# Estimate ATT using DID
+DID_modelA <- glm(disorder_changeA ~ exposedA + populationA, data = worldA)
+ATT_estimateA <- summary(DID_modelA)$coef[2, 1]
+print(paste0(
+  "The estimated ATT in World A using DID is: ", round(ATT_estimateA, 3), 
+  ". This estimate should be close to the true ATT of -40"
+))
+
+```
+
+\subsubsection{Visualizing WorldA}
+
+```{r}
+# Assuming parallel trends, the slope from control in time t0 to t1
+# should be the same as the slope for treated in time t0 to t1 
+plot(
+x = c(0, 1), y = c(treatment_t0A, treatment_t1A), col = "red",
+ylim = c(min(control_t0A, treatment_t0A) - 50, 
+           max(control_t1A, treatment_t1A) + 50),
+ylab = "Post-treatment Public Disorder Incidents Means", xlab = "Time", xlim = c(-.2, 1.2)
+)
+points(x = c(0, 1), y = c(control_t0A, control_t1A), col = "blue") 
+points(x = 1, y = counterfactual_treatment_postA, col = "red", pch = 19)
+
+```
+
+\subsection{Would B: Violating Parallel Assumption}:
+
+\par In World B, however, we change coefficient of the pre-treatment public  disorder incident rate from 1 to 2, which means that even if no OPCs were introduced, the disorder rates in the treatment and control groups would have evolved differently over time. This breaks the parallel trends assumption.
+
+\begin{itemize}
+    \item \textbf{Neighborhood Size:} The average population per neighborhood is 1,000 residents, with a standard deviation of 100.
+    $$
+    \text{population density} \sim \text{N}(1000, 100^2)
+    $$
+
+    \item \textbf{Pre-Treatment Public Disorder Incidents:} The number of pre-treatment public disorder incidents follows a normal distribution with a mean of 100 and a standard deviation of 20.
+    $$
+    \text{public disorder}_{pre} \sim \text{N}(100, 20^2)
+    $$
+
+    \item \textbf{OPC Treatment Assignment (Z):}
+    \begin{itemize}
+        \item \( Z = 1 \) if the neighborhood area has high pre-treatment disorder incidents (\(\geq 110\))
+        \item \( Z = 0 \) otherwise
+    \end{itemize}
+
+    \item The treatment assignment follows:
+    $$
+    Z = \begin{cases}
+        1,& \text{if } \text{public disorder}_{pre} \geq 110\\
+        0,& \text{otherwise}
+    \end{cases}
+    $$
+
+    \item \textbf{Outcome Variables:}
+    \begin{itemize}
+        \item \( Y(0) \): Control group outcome (No OPC)
+        \item \( Y(1) \): Treatment group outcome (With OPC)
+    \end{itemize}
+    
+    \begin{align}
+    Y(0) &\sim \mathcal{N}(30 + 2 \times \text{public disorder}_{pre}, 20^2) \\
+    Y(1) &\sim \mathcal{N}(30 + 2 \times \text{public disorder}_{pre} - 40, 20^2)
+    \end{align}
+    
+    \item \textbf{Observed Post-Treatment Disorder Rate:}
+    $$
+    \text{public disorder}_{post} = \begin{cases}
+        Y(0),& \text{if } Z = 0\\
+        Y(1),& \text{otherwise}
+    \end{cases}
+    $$
+
+\end{itemize}
+```{r}
+n <- 1000
+populationB <- rnorm(n, mean = 1000, sd = 100) 
+disorder_preB <- rnorm(n, mean = 100, sd = 20) 
+exposedB <- ifelse(disorder_preB > 110, 1, 0)
+y0B <- rnorm(n, 30 + 2*disorder_preB, 20)
+y1B <- rnorm(n, 30 + 2*disorder_preB - 40, 20) 
+yB <- y0B * (1 - exposedB) + y1B * exposedB
+
+worldB <- data.frame(
+  y0B = y0B, 
+  y1B = y1B, 
+  disorder_postB = yB,
+  disorder_preB = disorder_preB,
+  exposedB = exposedB, 
+  populationB
+)
+
+# Mean public disorder for treatment and control groups at t=0 and t=1
+treatment_t0B <- mean(worldB$disorder_preB[worldB$exposedB == 1])  
+treatment_t1B <- mean(worldB$disorder_postB[worldB$exposedB == 1])  
+control_t0B <- mean(worldB$disorder_preB[worldB$exposedB == 0])  
+control_t1B <- mean(worldB$disorder_postB[worldB$exposedB == 0])
+counterfactual_treatment_postB <- treatment_t0B + (control_t1B - control_t0B)
+head(worldB)
+worldB$disorder_changeB <- worldB$disorder_postB - worldB$disorder_preB
+# Estimate ATT using DID
+DID_modelB <- glm(disorder_changeB ~ exposedB + populationB, data = worldB)
+ATT_estimateB <- summary(DID_modelB)$coef[2, 1]
+print(paste0(
+  "The estimated ATT in World A using DID is: ", round(ATT_estimateB, 3), 
+  ". This is far from the true ATT of -40"
+))
+
+```
+
+\subsubsection{Visualizing WorldB}
+```{r}
+plot(
+x = c(0, 1), y = c(treatment_t0B, treatment_t1B), col = "red",
+ylim = c(min(control_t0B, treatment_t0B) - 40, 
+           max(control_t1B, treatment_t1B) + 40),
+ylab = "Post-treatment public disorder rate means", xlab = "Time", xlim = c(-.2, 1.2)
+)
+points(x = c(0, 1), y = c(control_t0B, control_t1B), col = "blue") 
+points(x = 1, y = counterfactual_treatment_postB, col = "red", pch = 19)
+```
+\section{4) Causal Estimate and Interpretation}
+
+\subsection{World A}
+\par The causal estimate of OPCs on public disorder incidents in World A was -41.71 (SE = 1.37). This means that if DID assumptions hold, we can say that the presence of OPCs led to an average reduction of 41 public disorder incidents in neighborhoods that received the intervention as compared to the situation if they had they not received it.
+```{r}
+att_didA_estimate <- summary(glm(disorder_changeA ~ exposedA + populationA, data = worldA))$coef[2, 1] 
+att_didA_se <- summary(glm(disorder_changeA ~ exposedA + populationA, data = worldA))$coef[2, 2] 
+round(att_didA_estimate, 3)
+round(att_didA_se, 3)
+estimates_and_se <- data.frame( 
+  world = "World A",
+  estimate = att_didA_estimate, 
+  standard_error = att_didA_se
+)
+```
+\subsection{World B}
+\par The causal estimate for neighborhood area with OPC in World B was -10.541 with a standard error of 1.367. This shows that if we compare neighborhoods with similar pre-treatment disorder rates, one with an OPC and one without, we find that the OPC-exposed neighborhood experienced approximately 10 fewer public disorder incidents on average compared to those that did not receive the intervention. However, due to the violation of parallel trends, this difference cannot be solely attributed to the causal effect of OPCs.
+
+```{r}
+att_didB_estimate <- summary(glm(disorder_changeB ~ exposedB + populationB, data = worldB))$coef[2, 1] 
+att_didB_se <- summary(glm(disorder_changeB ~ exposedB + populationB, data = worldB))$coef[2, 2] 
+round(att_didB_estimate, 3)
+round(att_didB_se, 3)
+estimates_and_se <- estimates_and_se %>%
+  add_row( 
+  world = "World B",
+  estimate = att_didB_estimate, 
+  standard_error = att_didB_se
+)
+```
+
+```{r}
+# Summary table
+estimates_and_se <- estimates_and_se %>% 
+  rename(
+    "World" = "world",
+    "Causal Estimate" = "estimate",
+    "Standard Error" = "standard_error"
+) %>%
+gt() %>% 
+  tab_style(
+    style = cell_text(weight = "bold"), 
+    locations = cells_column_labels(
+      columns = c( "World",
+        "Causal Estimate",
+        "Standard Error") 
+      )
+  )
+```
+```{r}
+estimates_and_se
+```
+
+
+\section{5) Bias}
+\par Lastly, we created a sampling distribution or randomization distribution with 10,000 iterations to calculate the bias of each method. In World A where all assumptions hold, the bias is small. The estimates from the linear regression are close to the true causal effect at the cutoff. However, in World B, we violated the parallel assumption by assigning the pre-treatment public diorder incident rate coefficient to be 2. Thus, bias was much larger in this case.
+
+\subsection{World A}
+```{r}
+Itr <- 1000 
+true_value <- -40
+did_attA <- rep(NA, 1000)
+for (i in 1:Itr){
+  n <- 1000
+  populationA <- rnorm(n, mean = 1000, sd = 100) 
+  disorder_preA <- rnorm(n, mean = 100, sd = 20) 
+  exposedA <- ifelse(disorder_preA > 110, 1, 0)
+  y0A <- rnorm(n, 30 + disorder_preA, 20)
+  y1A <- rnorm(n, 30 + disorder_preA - 40, 20) 
+  yA <- y0A * (1 - exposedA) + y1A * exposedA
+  
+  worldA <- data.frame(
+    y0A = y0A, 
+    y1A = y1A, 
+    disorder_postA = yA,
+    disorder_preA = disorder_preA,
+    exposedA = exposedA, 
+    populationA
+  )
+  treatment_t0A <- mean(worldA$disorder_preA[worldA$exposedA == 1])  
+  treatment_t1A <- mean(worldA$disorder_postA[worldA$exposedA == 1])  
+  control_t0A <- mean(worldA$disorder_preA[worldA$exposedA == 0])  
+  control_t1A <- mean(worldA$disorder_postA[worldA$exposedA == 0])
+  worldA$disorder_changeA <- worldA$disorder_postA - worldA$disorder_preA
+  DID_modelA <- glm(disorder_changeA ~ exposedA + populationA, data = worldA)
+  did_attA[i] <- summary(DID_modelA)$coef[2, 1]
+}
+bias_worldA <- true_value - mean(as.numeric(did_attA)) 
+abs(bias_worldA)
+```
+
+\subsection{World B}
+```{r}
+Itr <- 1000 
+true_value <- -40
+did_attB <- rep(NA, 1000)
+for (i in 1:Itr){
+  n <- 1000
+  populationB <- rnorm(n, mean = 1000, sd = 100) 
+  disorder_preB <- rnorm(n, mean = 100, sd = 20) 
+  exposedB <- ifelse(disorder_preB > 110, 1, 0)
+  y0B <- rnorm(n, 30 + 2*disorder_preB, 20)
+  y1B <- rnorm(n, 30 + 2*disorder_preB - 40, 20) 
+  yB <- y0B * (1 - exposedB) + y1B * exposedB
+
+  worldB <- data.frame(
+    y0B = y0B, 
+    y1B = y1B, 
+    disorder_postB = yB,
+    disorder_preB = disorder_preB,
+    exposedB = exposedB, 
+    populationB
+  )
+  treatment_t0B <- mean(worldB$disorder_preB[worldB$exposedB == 1])  
+  treatment_t1B <- mean(worldB$disorder_postB[worldB$exposedB == 1])  
+  control_t0B <- mean(worldB$disorder_preB[worldB$exposedB == 0])  
+  control_t1B <- mean(worldB$disorder_postB[worldB$exposedB == 0])
+  worldB$disorder_changeB <- worldB$disorder_postB - worldB$disorder_preB
+  DID_modelB <- glm(disorder_changeB ~ exposedB + populationB, data = worldB)
+  did_attB[i] <- summary(DID_modelB)$coef[2, 1]
+}
+bias_worldB <- true_value - mean(as.numeric(did_attB)) 
+abs(bias_worldB)
+```
+
+\section{6) Discussion}
+
+In this project, we designed a difference-in-differences setting using simulation to derive causal estimates and rigorously test its underlying assumptions. Although we assume that all DID assumptions hold in World A, achieving this in a real-world setting is quite challenging. For example, the SUTVA assumption basically eliminates any spillover effect. However, in the context of Overdose Prevention Centers, spillover effects are almost inevitable.
+
+
+
+
+
+
+
+
