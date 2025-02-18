@@ -1,0 +1,450 @@
+---
+title: "Instrumental Variable (IV) Simulation Project"
+author: "Jiashu Liu"
+date: "2023-12-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning=FALSE,message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(gt)
+library(AER)
+set.seed(123)
+```
+
+\section{1) Scenario}
+
+Imagine that we are doing a study in which 1000 adults from a neighborhood community were randomly assigned to one of the two conditions. One group was encouraged via a personalized email from their healthcare providers encouraging them to participate in a nutritional counseling program designed to help with weight management. People in the other were also allowed to participate but received no special encouragement. To be more specific, people who did not received the encouragement email would have to discover the existence of the nutritional counseling program by themselves. Whether or not a student was sent an encouragement email was determined randomly. Each adult has a 0.5 probability of being encouraged.
+
+The outcome variable y denoted the change in BMI. y below 0 represents a decrease in BMI indicates successful weight management, whereas y equal to or greater than 0 indicates less successful or unsuccessful weight management.
+
+\section{2) IV Assumptions}
+
+- Ignorability of the instrument: The assignment to the treatment (i.e., receiving the encouraging email) is random.
+- Non-zero correlation between instrument and treatment.
+- Monotonicity: no defiers. D(1) >= D(0)
+- Exclusion Restriction: any effect of Z on Y must be via an effect of Z on D. For always takers and never takers, the values need to be the same or the distribution of them should be the same.
+- SUTVA: potential outcomes for each person i are unrelated to the treatment status of other individuals
+
+
+\section{3) Data Generating Process (DGP)}
+
+- We generate data from a sample of 1000 individuals (sample size N = 1000).
+- Probability of encouragement (z) is .5 for all individuals (z is instrument)
+- Assume that, on average, 30% of individuals in our sample are compliers.
+- Assume that, on average, 60% are never takers.
+- Assume that, on average, 10% are always takers.
+- Status is a variable representing compliance status. status has 3 possible values: complier, always taker, or never taker.
+- The exclusion restriction is satisfied.
+- The average effect of z on y for the compliers is -1.5 (a decrese in BMI)
+- The average y(z=0)=y(0) for never takers is 0 (no change in BMI)
+- The average y(z=0)=y(0) for compliers is -1 (a decrease in BMI without encouragement)
+- The average y(z=0)=y(0) for always takers is -2.2 (a decrease in BMI without the need for encouragement)
+- The residual standard deviation is 0.5 for everyone in the sample (generated independently for each potential outcome).
+
+```{r}
+# Thoughts on setting the BMI change
+height_in_meters = 1.7  
+bmi_change = 0.5 
+kg_to_pounds = 2.20462 
+
+weight_change_kg = bmi_change * (height_in_meters ** 2)
+
+# Converting weight to pounds to see whether the number is plausible  
+# for the situation of reducing weight over 6 months. 
+weight_change_pounds = weight_change_kg * kg_to_pounds
+weight_change_pounds
+```
+
+\par We simulate data for three worlds:
+
+\subsection{(1). World A - all assumptions are satisfied}
+
+\par Formal model for WorldA:
+
+\begin{align*}
+    D_i &= \gamma_0 + \gamma_1Z_i + v_i \\
+    Y_i &= \beta_0 + \beta_1D_i + \epsilon_i, \quad \text{where } v_i \text{ and } \epsilon_i \text{ are error terms.}
+\end{align*}
+
+\subsubsection{Generating data for WorldA}
+
+```{r, warning=FALSE,message=FALSE}
+#Effect of complier: E[Y(1) - Y(0)] = -1.5
+#The average Y(Z=0)=Y(0) for compliers is -1
+#Therefore, E[y(1)] = E(y(0)) + (-1) = -2.5
+#The average Y(Z=0)=Y(0) for never takers is 0
+#Therefore, E(y(1)) = E(y(0)) = 0
+#The average Y(Z=0)=Y(0) for always takers is -2.2
+#Therefore, E(y(1)) = E(y(0)) = -2.2
+#The residual standard deviation is 0.5 for everyone in the sample (generated #independently
+dgpA <- function(seed = 2){
+      set.seed(seed)
+      n <- 1000
+      # create a vector of compliance status (30% complier , 10% always taker, 60% never taker)
+      C <- sample(x = c('complier', 'always taker', 'never taker'), 
+                  size = n, replace = TRUE, p = c(.3, .1, .6))
+      z <- rbinom(n, 1, 0.5)
+      
+      # simulate D0 (treatment|instrument = 0) and D1(treatment|instrument = 1)
+      # start with empty vectors 
+      d0 <- vector()
+      d1 <- vector()
+      
+      # fill in compliers
+      d0[C== 'complier'] <- 0
+      d1[C== 'complier'] <- 1
+      
+      # fill in always takers 
+      d0[C== 'always taker'] <- 1
+      d1[C== 'always taker'] <- 1
+      
+      # fill in never takers 
+      d0[C== 'never taker'] <- 0
+      d1[C== 'never taker'] <- 0
+      
+      # now that we have D0 and D1 for everyone realize D
+      d <- ifelse(z == 1, d1, d0)
+      
+      # simulate y0 (outcome|treatment= 0) and Y1(outcome|treatment= 1)
+      # start with empty vectors 
+      y0 <- vector()
+      y1 <- vector()
+      
+      # fill in compliers
+      y0[C== 'complier'] <- -1 + rnorm(n, 0, 0.5)
+      y1[C== 'complier'] <- -2.5 + rnorm(n, 0, 0.5)
+      
+      # fill in always takers 
+      y0[C== 'always taker'] <- -2.2 + rnorm(n, 0, 0.5)
+      y1[C== 'always taker'] <- -2.2 + rnorm(n, 0, 0.5)
+      
+      # fill in never takers 
+      y0[C== 'never taker'] <- 0 + rnorm(n, 0, 0.5)
+      y1[C== 'never taker'] <- 0 + rnorm(n, 0, 0.5)
+      
+      # add error terms 
+      residuals <- rnorm(n, mean = 0, sd = 0.5) 
+      y0 <- y0 + residuals
+      y1 <- y1 + residuals
+      
+      # now that we have y0 and Y1 for everyone realize Y
+      y <- ifelse(d == 1, y1, y0)
+      return(tibble(z = z, d = d, y = y))
+}
+
+worldA <- dgpA() # observed data
+```
+
+\subsection{(2). World B - exclusion assumption violated}
+
+\par Formal model for WorldB (Exclusion restriction violated)
+
+\begin{align*}
+    D_i &= \gamma_0 + \gamma_1Z_i + v_i \\ 
+    Y_i &= \beta_0 + \beta_1D_i + \theta Z_i+ \epsilon_i \\ 
+    \intertext{The inclusion of \( \theta Z_i \) denotes a direct effect of the instrument variable \( Z \) on \( Y \).} 
+\end{align*}
+
+
+```{r, warning=FALSE,message=FALSE}
+dgpB <- function(seed = 2){
+      set.seed(seed) 
+      n <- 1000
+      theta <- -0.5
+      C <- sample(x = c('complier', 'always taker', 'never taker'), 
+                  size = n, replace = TRUE, prob = c(0.3, 0.1, 0.6))
+      
+      z <- rbinom(n, 1, 0.5)
+      
+      d0 <- vector()
+      d1 <- vector()
+  
+      d0[C== 'complier'] <- 0
+      d1[C== 'complier'] <- 1
+      
+      d0[C== 'always taker'] <- 1
+      d1[C== 'always taker'] <- 1
+
+      d0[C== 'never taker'] <- 0
+      d1[C== 'never taker'] <- 0
+      
+      # Realized treatment based on z
+      d <- ifelse(z == 1, d1, d0)
+    
+      y0 <- vector()
+      y1 <- vector()
+
+      y0[C== 'complier'] <- -1 + rnorm(n, 0, 0.5)
+      y1[C== 'complier'] <- -2.5 + rnorm(n, 0, 0.5)
+
+      y0[C== 'always taker'] <- -2.2 + rnorm(n, 0, 0.5)
+      y1[C== 'always taker'] <- -2.2 + rnorm(n, 0, 0.5)
+
+      y0[C== 'never taker'] <- 0 + rnorm(n, 0, 0.5)
+      y1[C== 'never taker'] <- 0 + rnorm(n, 0, 0.5)
+      
+      # Add error terms
+      residuals <- rnorm(n, mean = 0, sd = 0.5) 
+      y0 <- y0 + residuals
+      y1 <- y1 + residuals
+
+      # Add Direct Effect of Z to Y
+      y0 <- y0 + theta * z  
+      y1 <- y1 + theta * z
+      
+      # Direct effect of z on y
+      y <- ifelse(d == 1, y1, y0) 
+      return(tibble(z = z, d = d, y = y))
+  }
+
+worldB <- dgpB()
+```
+
+\subsection{(3). World C - Non-zero correlation between instrument and treatment assumption violated}
+
+\par Formal model for WorldC
+
+\begin{align*}
+D_i = \gamma_0 + v_i \\
+Y_i = \beta_0 + \beta_1D_i + \epsilon_i \\
+\end{align*}
+
+```{r, warning=FALSE,message=FALSE}
+dgpC <- function(seed = 2){
+      set.seed(seed) 
+      n <- 1000
+
+      C <- sample(x = c('complier', 'always taker', 'never taker'), 
+                  size = n, replace = TRUE, prob = c(0.3, 0.1, 0.6))
+
+      z <- rbinom(n, 1, 0.5)
+      d <- rbinom(n, 1, 0.5)
+
+      y0 <- vector()
+      y1 <- vector()
+
+      y0[C== 'complier'] <- -1 + rnorm(n, 0, 0.5)
+      y1[C== 'complier'] <- -2.5 + rnorm(n, 0, 0.5)
+
+      y0[C== 'always taker'] <- -2.2 + rnorm(n, 0, 0.5)
+      y1[C== 'always taker'] <- -2.2 + rnorm(n, 0, 0.5)
+
+      y0[C== 'never taker'] <- 0 + rnorm(n, 0, 0.5)
+      y1[C== 'never taker'] <- 0 + rnorm(n, 0, 0.5)
+      
+      y <- ifelse(d == 1, y1, y0)
+      
+      return(tibble(z = z, d = d, y = y))
+}
+
+worldC <- dgpC()
+```
+
+\section{4) Causal estimate and interpretation}
+
+** CACE for worldA **
+
+```{r}
+# CACE estimated using as-treated approach for world A 
+as_treated_A <- lm(y ~ d, data = worldA) 
+summary(as_treated_A)
+as_treated_effectA <- summary(as_treated_A)$coef[2, 1:2]
+as_treated_effectA <- c(Estimate = round(summary(as_treated_A)$coef[2, 1], 2),
+            Std_Error = round(summary(as_treated_A)$coef[2, 2], 2),
+            t_value = round(summary(as_treated_A)$coef[2, 3], 2),
+            Pr_t = round(summary(as_treated_A)$coef[2, 4], 2))
+as_treated_effectA
+```
+
+```{r}
+# CACE estimated using tsls approach for world A
+fitA <- ivreg(y ~ d|z, data = worldA) 
+summaryA <- summary(fitA)
+summaryA
+CACE_A <- c(Estimate = round(summaryA$coef[2, 1], 2),
+            Std_Error = round(summaryA$coef[2, 2], 2),
+            t_value = round(summaryA$coef[2, 3], 2),
+            Pr_t = round(summaryA$coef[2, 4], 2))
+CACE_A
+```
+
+Interpretation:
+
+In world A, where all assumptions are satisfied,the CACE estimate is a valid representation of the causal effect of participating in the nutritional counseling program on BMI change. 
+
+The CACE estimated for World A using the as-treated analysis is statistically significant, indicated by a value of -2.11 and a standard error of 0.05. It suggests that th effect of participating the nutritional counseling program (versus not participating it) for those who will actually take it when encouraged and won't if not encouraged (compliers) is a a reduction of 2.11 units in BMI. 
+
+The CACE estimated for World A using the tsls approach is also statistically significant, indicated by a value of -1.34 and a standard error of 0.17. It implies that th effect of participating the nutritional counseling program (versus not participating it) for those who will actually take it when encouraged and won't if not encouraged (compliers) is a a reduction of 1.34 units in BMI. 
+
+
+** CACE for worldB **
+
+```{r}
+# CACE estimated using as-treated approach for world B
+as_treated_B <- lm(y ~ d, data = worldB) 
+summary(as_treated_B)
+as_treated_effectB <- summary(as_treated_B)$coef[2, 1:2]
+as_treated_effectB <- c(Estimate = round(summary(as_treated_B)$coef[2, 1], 2),
+            Std_Error = round(summary(as_treated_B)$coef[2, 2], 2),
+            t_value = round(summary(as_treated_B)$coef[2, 3], 2),
+            Pr_t = round(summary(as_treated_B)$coef[2, 4], 2))
+as_treated_effectB
+```
+
+```{r}
+# CACE estimated using tsls approach for world B
+fitB <- ivreg(y ~ d|z, data = worldB)
+summaryB <- summary(fitB)
+summaryB
+CACE_B <- c(Estimate = round(summaryB$coef[2, 1], 2),
+            Std_Error = round(summaryB$coef[2, 2], 2),
+            t_value = round(summaryB$coef[2, 3], 2),
+            Pr_t = round(summaryB$coef[2, 4], 2))
+CACE_B
+```
+Interpretation:
+
+The CACE estimated using the as-treated analysis for World B is statistically significant, indicated by a value of -2.31 and a standard error of 0.05. The CACE estimate using the tsls approach for World B is also statistically significant, indicated by a value of -3.02 and a standard error of 0.17. In World B, the exclusion restriction is violated. Therefore, the CACE estimated through the as-treated approach does not exclusively represent the causal effect of the treatment but may include the direct effect of the instrument on the outcome.
+
+** CACE for worldC **
+```{r}
+# CACE estimated using as-treated approach for world C
+as_treated_C <- lm(y ~ d, data = worldC) 
+summary(as_treated_C)
+as_treated_effectC <- summary(as_treated_C)$coef[2, 1:2]
+as_treated_effectC <- c(Estimate = round(summary(as_treated_C)$coef[2, 1], 2),
+            Std_Error = round(summary(as_treated_C)$coef[2, 2], 2),
+            t_value = round(summary(as_treated_C)$coef[2, 3], 2),
+            Pr_t = round(summary(as_treated_C)$coef[2, 4], 2))
+as_treated_effectC
+```
+
+```{r}
+# CACE estimated using tsls approach for world C
+fitC <- ivreg(y ~ d|z, data = worldC) 
+summaryC <- summary(fitC)
+summaryC
+CACE_C <- c(Estimate = round(summaryC$coef[2, 1], 2),
+            Std_Error = round(summaryC$coef[2, 2], 2),
+            t_value = round(summaryC$coef[2, 3], 2),
+            Pr_t = round(summaryC$coef[2, 4], 2))
+CACE_C
+```
+
+Interpretation: 
+
+The CACE estimated using the as-treated analysis for World C is statistically significant, as indicated by a value of -0.39 with a large standard error of  0.07. The CACE estimated using tsls for World C is not statistically significant, as indicated by a value of -0.07 with a large standard error of 1.88. In World C, the assumption of non-zero correlation between the instrument and the treatment was designed to be violated. This violation means that receiving the encouragement email did not effectively influence people's decision on whether to participate the nutritional counseling program or not. Therefore, even though we have a numerical estimate obtained, it does not carry any causal interpretation. The CACE estimate in World C does not provide any reliable insights into the causal impact of the nutritional counseling program on BMI change.
+
+```{r}
+results <- data.frame(
+  World = c("A", "B", "C", "A", "B", "C"),
+  Method = c("TSLS", "TSLS", "TSLS", "As-Treated", "As-Treated", "As-Treated"),
+  Estimate = c(CACE_A["Estimate"], CACE_B["Estimate"], CACE_C["Estimate"],
+               as_treated_effectA["Estimate"], as_treated_effectB["Estimate"],
+               as_treated_effectC["Estimate"]),
+  Std_Error = c(CACE_A["Std_Error"], CACE_B["Std_Error"], CACE_C["Std_Error"],
+                as_treated_effectA["Std_Error"], as_treated_effectB["Std_Error"],
+                as_treated_effectC["Std_Error"]),
+  t_value = c(CACE_A["t_value"], CACE_B["t_value"],
+              CACE_C["t_value"],as_treated_effectA["Std_Error"], 
+              as_treated_effectB["Std_Error"], as_treated_effectC["Std_Error"]),
+  Pr_t = c(CACE_A["Pr_t"], CACE_B["Pr_t"], CACE_C["Pr_t"], 
+           as_treated_effectA["Pr_t"], as_treated_effectB["Pr_t"], 
+           as_treated_effectC["Pr_t"])
+)
+knitr::kable(results, caption = "CACE Estimates and Statistics for Worlds A, B, and C")
+```
+
+\section{5) Evaluating Bias}
+
+In summary, biases are observed in both methods even using sampling distribution with 10,000 iterations. Notably, the tsls method's CACE estimate for World A is the most accurate, exhibiting minimal bias and closely aligning with the true average effect. This accuracy can be attributed to World A's adherence to the IV assumptions. The the biases in both Worlds B and C suggest that violating key IV assumptions can lead to substantial biases. 
+
+By comparing the result, we can clearly see that the tsls outperformed the as-treated approach. The tsls framework uses instruments that are correlated with the treatment and only correlated with the outcome through the treatment, not through random assignment. This helps to isolate the variation in treatment that is not confounded by unobserved factors, providing a more accurate estimate of the causal effect. These biases highlight the importance of choosing the appropriate method for causal inference and the critical role played by the underlying assumptions of each method.
+
+```{r}
+suppressWarnings({ 
+    true_average_effect <- -1.5
+    nItr <- 10000
+    as_treatedA <- function() {
+      dataA <- dgpA() 
+      fit1 <- lm(y~d, data = dataA)
+      return(summary(fit1)$coef[2, 1]) # Return the estimate
+    }
+    
+    as_treatedB <- function() {
+      dataB <- dgpB() 
+      fit2 <- lm(y~d, data = dataB)
+      return(summary(fit2)$coef[2, 1]) # Return the estimate
+    }
+    
+    as_treatedC <- function() {
+      dataC <- dgpC() 
+      fit3 <- lm(y~d, data = dataC)
+      return(summary(fit3)$coef[2, 1]) # Return the estimate
+    }
+    
+    bias_worldA_1 <- mean(replicate(nItr, as_treatedA()) - true_average_effect)
+    bias_worldB_1 <- mean(replicate(nItr, as_treatedB()) - true_average_effect)
+    bias_worldC_1 <- mean(replicate(nItr, as_treatedC()) - true_average_effect)
+})  
+```
+
+```{r}
+suppressWarnings({ 
+    true_average_effect <- -1.5
+    nItr <- 10000
+    calculate_CACE_A <- function() {
+      simA <- dgpA() 
+      regA <- ivreg(y ~ d | z, data = simA)
+      return(summary(regA)$coef[2, 1]) # Return the estimate
+    }
+    
+    calculate_CACE_B <- function() {
+      simB <- dgpB() 
+      regB <- ivreg(y ~ d | z, data = simB)
+      return(summary(regB)$coef[2, 1]) # Return the estimate
+    }
+    
+    calculate_CACE_C <- function() {
+      simC <- dgpC() 
+      regC <- ivreg(y ~ d | z, data = simC)
+      return(summary(regC)$coef[2, 1]) # Return the estimate
+    }
+    
+    bias_worldA <- mean(replicate(nItr, calculate_CACE_A()) - true_average_effect)
+    bias_worldB <- mean(replicate(nItr, calculate_CACE_B()) - true_average_effect)
+    bias_worldC <- mean(replicate(nItr, calculate_CACE_C()) - true_average_effect)
+})  
+```
+
+```{r}
+# Creating a data frame to hold the results
+results <- data.frame(
+  Method = c("As-Treated", "As-Treated", "As-Treated", "TSLS", "TSLS", "TSLS"),
+  World = c("A", "B", "C", "A", "B", "C"),
+  Bias = c(bias_worldA_1, bias_worldB_1, bias_worldC_1, bias_worldA, bias_worldB, bias_worldC)
+)
+knitr::kable(results, caption = "Bias Calculations for As-Treated and IV Methods across Worlds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
